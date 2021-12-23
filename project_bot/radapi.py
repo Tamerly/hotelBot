@@ -90,8 +90,12 @@ class SearchHotel:
                                 "landmarkIds": "city center"}
                                )
         sys_message = bot.send_message(user_id, 'Идет поиск отелей')
-        response = requests.get(url, headers=cls.headers, params=querystring)
-        user_data_base[user_id].cache_data = json.loads(response.text)
+        try:
+            response = requests.get(url, headers=cls.headers, params=querystring, timeout=10)
+            user_data_base[user_id].cache_data = json.loads(response.text)
+        except requests.exceptions.ConnectTimeout:
+            bot.send_message(user_id, 'Возникла ошибка при поиске. Пожалуйста, попробуйте позднее')
+
         apihelper.delete_message(config['TELEGRAM_API_TOKEN'], sys_message.chat.id,
                                  sys_message.id)
         cls.show_hotels(user_id)
