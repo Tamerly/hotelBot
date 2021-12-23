@@ -2,7 +2,7 @@ import json
 import re
 import requests
 from project_bot.loader import config, user_data_base, bot
-from telebot import types, apihelper
+from telebot import types, apihelper, TeleBot
 from project_bot.history import saving_history
 
 
@@ -16,31 +16,33 @@ class SearchHotel:
     }
 
     @classmethod
-    def search_city_data(cls, bot, message):
+    def search_city_data(cls, bot: TeleBot, message: types.Message) -> None:
         """
         Функция отправляет get запрос на сервер для получения информации,
         уточняет искомый город, записывает в объект User кеш ответа,
         отправляет список кликабельных городов.
+
         :param bot: объект телеграмм бота
         :param message: объект входящего сообщения от пользователя
         """
         url = "https://hotels4.p.rapidapi.com/locations/v2/search"
         querystring = {"query": message.text, "locale": user_data_base[message.chat.id].language}
         sys_message = bot.send_message(message.from_user.id, 'Идет поиск информации по городу')
-
-        response = requests.get(url, headers=cls.headers, params=querystring, timeout=10)
-        if cls.check_response_status(response=response, bot=bot, message=message):
+        try:
+            response = requests.get(url, headers=cls.headers, params=querystring, timeout=10)
             user_data_base[message.from_user.id].cache_data = json.loads(response.text)
             patterns_span = re.compile(r'<.*?>')
             cls.generating_buttons_list_for_city_clarification(bot=bot, message=message, patterns=patterns_span)
-        else:
+        except requests.exceptions.ConnectTimeout:
             bot.send_message(message.from_user.id, 'Возникла ошибка при поиске. Пожалуйста, попробуйте позднее')
 
     @classmethod
-    def generating_buttons_list_for_city_clarification(cls, bot, message, patterns):
+    def generating_buttons_list_for_city_clarification(cls, bot: TeleBot, message: types.Message,
+                                                       patterns: re.Pattern) -> None:
         """
         Функция составляет и отправляет в чат список кликабельных городов в случае нахождения,
         или отправляет сообщение о том, что город не найден
+
         :param bot: объект телеграмм бота
         :param message: объект входящего сообщения от пользователя
         :param patterns: class 're.Pattern'
@@ -55,28 +57,14 @@ class SearchHotel:
                 markup.add(add)
                 count += 1
             bot.send_message(message.from_user.id, "Уточните город", reply_markup=markup)
-        # запуск inline блока elif
         else:
             bot.send_message(message.from_user.id, 'К сожалению, по данному городу нет данных')
 
     @classmethod
-    def check_response_status(cls, response, bot, message):
-        """
-        Функция проверки статуса ответа объекта response
-        :param response:
-        :param bot:
-        :param message:
-        :return:
-        """
-        if response.status_code != 200:
-            return False
-        else:
-            return True
-
-    @classmethod
-    def search_hotels(cls, bot, user_id):
+    def search_hotels(cls, bot: TeleBot, user_id: int) -> None:
         """
         Функция поиска отелей по выбранным параметрам метода поиска
+
         :param bot: объект телеграмм бота
         :param user_id: int уникальный id пользователя
         """
@@ -109,26 +97,39 @@ class SearchHotel:
         cls.show_hotels(user_id)
 
     @classmethod
-    def show_hotels(cls, user_id):
+    def show_hotels(cls, user_id: int) -> None:
         """
         Функция собирает информацию из спарсенного кэша подготовленное сообщение,
         собирает список фотографий, если они были запрошены,
         и отправляет в чат подготовленные сообщения
+
         :param user_id: int уникальный id пользователя
         """
         url_get_photo = "https://hotels4.p.rapidapi.com/properties/get-hotel-photos"
+        best_deal_view = 0
         for i in user_data_base[user_id].cache_data['data']['body']['searchResults']['results']:
+            if user_data_base[user_id].distance_min_max \
+                    and user_data_base[user_id].search_method == 'best_deal':
+                min_dist = user_data_base[user_id].distance_min_max.get('min')
+                max_dist = user_data_base[user_id].distance_min_max.get('max')
+                dist_center = int(re.findall(r'\d+', i["landmarks"][0]["distance"])[0])
+                if not min_dist <= dist_center <= max_dist:
+                    continue
+                else:
+                    best_deal_view += 1
+                    if best_deal_view > user_data_base[user_id].number_of_hotels_to_display:
+                        break
             i_text = '*Название: {name}*\nАдрес: {address}, {address_locality}, {street_address}\n' \
                      'От центра города: {distance}\nЦена {price}\n\n'.format(
-                        name=i["name"],
-                        address=i["address"].get("countryName"),
-                        address_locality=i["address"].get("locality"),
-                        street_address=i["address"].get("streetAddress")
-                        if i["address"].get("streetAddress")
-                        else "",
-                        distance=i["landmarks"][0]["distance"],
-                        price=i["ratePlan"]["price"]["current"]
-                     )
+                                                                        name=i["name"],
+                                                                        address=i["address"].get("countryName"),
+                                                                        address_locality=i["address"].get("locality"),
+                                                                        street_address=i["address"].get("streetAddress")
+                                                                        if i["address"].get("streetAddress")
+                                                                        else "",
+                                                                        distance=i["landmarks"][0]["distance"],
+                                                                        price=i["ratePlan"]["price"]["current"]
+                                                                        )
             if user_data_base[user_id].photo:
                 sys_message = bot.send_message(user_id, 'Идет поиск фото отеля *{name}*'.format(name=i["name"]))
                 response = requests.get(url_get_photo, headers=cls.headers, params={"id": i["id"]})
@@ -153,8 +154,7 @@ class SearchHotel:
             else:
                 bot.send_message(user_id, i_text)
             bot.send_message(user_id, 'https://ru.hotels.com/ho{hotel_id}'.format(hotel_id=i['id']))
+        if best_deal_view == 0 and user_data_base[user_id].search_method == 'best_deal':
+            bot.send_message(user_id, 'Подходящих отелей не найдено')
         saving_history(user_id)
         bot.send_message(user_id, 'Поиск завершен')
-
-
-

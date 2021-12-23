@@ -1,8 +1,9 @@
 from project_bot.models import *
+from telebot import types
 from project_bot.loader import user_data_base, bot
 
 
-def saving_history(user_id):
+def saving_history(user_id: int):
     """
     Функция сохраняет историю поиска в таблицу UserHistory по ключам
     column_user_id, column_command, column_hotels и column_date (сохраняет текущую дату при вызове)
@@ -33,10 +34,11 @@ def saving_history(user_id):
                     column_hotels='{}'.format(hotels)).save()
 
 
-def show_history(message):
+def show_history(message: types.Message):
     """
     Функция собирает информацию из базы данных по column_user_id,
     формирует сообщение и отправляет его в чат.
+
     В случае, если пользователя еще нет в базе, срабатывает блок else
     :param message: объект входящего сообщения от пользователя
     :return:
